@@ -6,6 +6,7 @@ import com.vasilevyuv.auth.domain.UserRole
 import com.vasilevyuv.infrastructure.database.DatabaseSettings
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
@@ -58,7 +59,7 @@ abstract class PostgresApiTest {
         } else {
             client
         }
-        ApiTestContext(requestClient).block()
+        ApiTestContext(requestClient, createClient { install(WebSockets) }).block()
     }
 
     protected fun <T> withConnection(block: (Connection) -> T): T = postgres.createConnection("").use(block)
@@ -89,4 +90,4 @@ abstract class PostgresApiTest {
     }
 }
 
-class ApiTestContext(val client: HttpClient)
+class ApiTestContext(val client: HttpClient, val webSocketClient: HttpClient)

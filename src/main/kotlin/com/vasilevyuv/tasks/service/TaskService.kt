@@ -2,11 +2,14 @@ package com.vasilevyuv.tasks.service
 
 import com.vasilevyuv.common.domain.ValidationException
 import com.vasilevyuv.tasks.domain.Task
+import com.vasilevyuv.tasks.domain.TaskChange
+import com.vasilevyuv.tasks.domain.TaskChangePublisher
+import com.vasilevyuv.tasks.domain.TaskChangeType
 import com.vasilevyuv.tasks.domain.TaskNotFoundException
 import com.vasilevyuv.tasks.domain.TaskRepository
 import com.vasilevyuv.tasks.domain.TaskStatus
 
-class TaskService(private val repository: TaskRepository) {
+class TaskService(private val repository: TaskRepository, private val changes: TaskChangePublisher) {
     suspend fun list(status: TaskStatus?, query: String?): List<Task> {
         val normalizedQuery = query?.trim()?.takeIf { it.isNotEmpty() }
         if (normalizedQuery != null && normalizedQuery.length > MAX_TITLE_LENGTH) {
@@ -21,19 +24,24 @@ class TaskService(private val repository: TaskRepository) {
         val normalizedTitle = title.trim()
         val normalizedDescription = description.trim()
         validateFields(normalizedTitle, normalizedDescription)
-        return repository.create(normalizedTitle, normalizedDescription, status)
+        val task = repository.create(normalizedTitle, normalizedDescription, status)
+        changes.publish(TaskChange(TaskChangeType.CREATED, task.id))
+        return task
     }
 
     suspend fun update(id: Long, title: String, description: String, status: TaskStatus): Task {
         val normalizedTitle = title.trim()
         val normalizedDescription = description.trim()
         validateFields(normalizedTitle, normalizedDescription)
-        return repository.update(id, normalizedTitle, normalizedDescription, status)
+        val task = repository.update(id, normalizedTitle, normalizedDescription, status)
             ?: throw TaskNotFoundException(id)
+        changes.publish(TaskChange(TaskChangeType.UPDATED, task.id))
+        return task
     }
 
     suspend fun delete(id: Long) {
         if (!repository.delete(id)) throw TaskNotFoundException(id)
+        changes.publish(TaskChange(TaskChangeType.DELETED, id))
     }
 
     private fun validateFields(title: String, description: String) {

@@ -3,13 +3,14 @@ info:
   title: Task API
   version: 1.0.0
   description: |
-    Учебный API задач, КТ4: роли. Чтение публичное; POST/PUT/DELETE задач требуют JWT.
+    Учебный API задач, КТ4: роли и WebSocket. Чтение публичное; POST/PUT/DELETE задач требуют JWT.
     Зарегистрируйтесь, выполните вход и вставьте accessToken в Authorize без префикса Bearer.
     Токен проверяется по подписи HS256, issuer, audience, сроку exp и userId существующего пользователя.
     По умолчанию срок токена — 3600 секунд; после истечения нужно снова войти.
     USER и ADMIN могут создавать и обновлять любые задачи; удалять может только ADMIN.
     Регистрация всегда создаёт USER. Администратор создаётся при запуске через ADMIN_LOGIN/ADMIN_PASSWORD.
     Роль читается из БД на каждом запросе: изменение прав действует и для ранее выданных JWT.
+    WebSocket /ws/tasks передаёт уведомления подключённым USER и ADMIN после изменения задачи.
     Неизвестные поля JSON отклоняются. Ошибки имеют единый формат ApiError.
 servers:
   - url: /
@@ -22,6 +23,8 @@ tags:
     description: Регистрация, вход и текущий пользователь
   - name: Tasks
     description: Создание, чтение, обновление и удаление задач
+  - name: Notifications
+    description: WebSocket-уведомления об изменениях задач
 
 paths:
   /:
@@ -272,6 +275,33 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /ws/tasks:
+    get:
+      tags: [Notifications]
+      operationId: subscribeToTaskChanges
+      summary: Подключиться к уведомлениям WebSocket (USER / ADMIN)
+      description: |
+        WebSocket handshake с Authorization: Bearer <JWT> и стандартными заголовками Upgrade.
+        URL: ws://localhost:8080/ws/tasks; при HTTPS используйте wss://.
+        JWT в query не принимается. Swagger Try it out не является WebSocket-клиентом.
+        После 101 сервер отправляет {"type":"READY"}, затем JSON текстовые кадры TaskNotification.
+        Подписка установлена до READY. Для начального состояния после READY выполните GET /tasks.
+        CREATED/UPDATED/DELETED отправляются после фиксации изменения в PostgreSQL;
+        неуспешные запросы и чтение не создают событий. Сообщения клиента запрещены (close 1008).
+        При истечении JWT или удалении пользователя (проверяется перед событием) соединение закрывается с 1008.
+        При переполнении очереди медленного клиента — 1013; требуется переподключение и GET /tasks.
+        Поток хранится в памяти одного экземпляра, без истории и гарантированной доставки после сбоя.
+        Здесь описан HTTP handshake; протокол сообщений приведён в README и схемах ниже.
+      security:
+        - bearerAuth: []
+      responses:
+        '101':
+          description: Переход на WebSocket; дальнейшие сообщения — текстовые кадры JSON
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /docs:
     get:
       tags: [System]
@@ -333,8 +363,24 @@ components:
       required: [name, checkpoint]
       properties:
         name: { type: string, example: Task API }
-        checkpoint: { type: string, example: KT4 roles }
-      example: { name: Task API, checkpoint: KT4 roles }
+        checkpoint: { type: string, example: KT4 WebSocket }
+      example: { name: Task API, checkpoint: KT4 WebSocket }
+    NotificationReady:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: { type: string, enum: [READY] }
+      example: { type: READY }
+    TaskNotification:
+      type: object
+      additionalProperties: false
+      required: [type, taskId]
+      properties:
+        type: { type: string, enum: [TASK_CREATED, TASK_UPDATED, TASK_DELETED] }
+        taskId: { type: integer, format: int64, minimum: 1 }
+      description: Уведомление об изменении; актуальное состояние задачи читается через HTTP API
+      example: { type: TASK_CREATED, taskId: 1 }
     Credentials:
       type: object
       additionalProperties: false

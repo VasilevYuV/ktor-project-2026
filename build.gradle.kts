@@ -24,6 +24,7 @@ dependencies {
     implementation(ktorLibs.server.callLogging)
     implementation(ktorLibs.server.auth.asProvider())
     implementation(ktorLibs.server.auth.jwt)
+    implementation(ktorLibs.server.websockets)
     implementation(libs.logback.classic)
     implementation(libs.exposed.core)
     implementation(libs.exposed.jdbc)
@@ -34,6 +35,7 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation(ktorLibs.server.testHost)
+    testImplementation(ktorLibs.client.websockets)
     testImplementation(libs.testcontainers.postgresql)
     testImplementation(libs.swagger.parser)
 }

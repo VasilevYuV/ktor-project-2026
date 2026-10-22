@@ -4,13 +4,14 @@
 «Кроссплатформенная разработка на языке Kotlin». Один проект последовательно
 развивается от базового API до приложения с БД, JWT, ролями и уведомлениями.
 
-**Текущий этап: КТ4 — роли USER/ADMIN и разграничение доступа.** API задач работает
+**Текущий этап: КТ4 — WebSocket-уведомления с аутентификацией.** API задач работает
 с PostgreSQL, Exposed, BCrypt и JWT. USER и ADMIN создают и обновляют задачи,
 удаление доступно только ADMIN. Администратор создаётся при запуске из настроек
 окружения; публичная регистрация всегда создаёт USER. Чтение и документация публичные.
-Все маршруты описаны в OpenAPI и доступны в Swagger UI; запросы журналируются
-через CallLogging, ошибки обрабатываются через StatusPages. WebSocket и
-контейнеризация приложения относятся к следующим этапам.
+После изменения задачи подключённые клиенты получают уведомление через `/ws/tasks`.
+Маршруты и WebSocket-handshake описаны в OpenAPI; HTTP API доступно в Swagger UI.
+Запросы журналируются через CallLogging, ошибки обрабатываются через StatusPages.
+Следующий этап — контейнеризация приложения.
 
 ## Требования и план коммитов
 
@@ -27,8 +28,8 @@
 | 2 | `feat: PostgreSQL and complete CRUD` | Exposed, схема БД, PostgreSQL, PUT и отдельный UpdateTaskRequest; CRUD и сохранность данных после перезапуска | Коммит `d6120ab` |
 | 3 | `feat: KT2 add registration and JWT authentication` | BCrypt, уникальность логина, вход, срок JWT, проверка userId, защита POST/PUT/DELETE; тесты 401 и неверных учётных данных | Коммит `da66646` |
 | 4 | `feat: KT3 document and test the API with OpenAPI` | Swagger/OpenAPI, CallLogging, расширение тестов API и централизованных ошибок, примеры Authorization | Коммит `41c1bdf` |
-| 5 | `feat: enforce user and admin permissions` | Роли USER/ADMIN, безопасное создание администратора, DELETE только для ADMIN; миграция, тесты 401/403 и разрешённого доступа | Реализован и проверен локально |
-| 6 | `feat: broadcast task changes over WebSocket` | Уведомления после успешных изменений, аутентификация соединения, проверка доставки нескольким клиентам и отключения | Запланирован |
+| 5 | `feat: enforce user and admin permissions` | Роли USER/ADMIN, безопасное создание администратора, DELETE только для ADMIN; миграция, тесты 401/403 и разрешённого доступа | Коммит `effc53e` |
+| 6 | `feat: broadcast task changes over WebSocket` | Уведомления после успешных изменений, аутентификация соединения, проверка доставки нескольким клиентам и отключения | Реализован и проверен локально |
 | 7 | `build: add reproducible Docker deployment` | Dockerfile, Compose с PostgreSQL и сохранением данных, пример настроек, проверка запуска и полного сценария, итоговый README | Запланирован |
 
 Каждый этап включает актуализацию README и проверки, затем остановку перед
@@ -55,6 +56,7 @@ src/main/kotlin/com/vasilevyuv/
 │   ├── Documentation.kt
 │   ├── RequestLogging.kt
 │   ├── Serialization.kt
+│   ├── WebSockets.kt
 │   └── Errors.kt
 ├── auth/
 │   ├── api/              # Регистрация, вход, /auth/me, проверка ADMIN и публичные DTO
@@ -67,10 +69,13 @@ src/main/kotlin/com/vasilevyuv/
 │   └── domain/           # Ошибка проверки входных данных
 ├── infrastructure/
 │   └── database/         # Настройки PostgreSQL и жизненный цикл пула HikariCP
+├── notifications/
+│   ├── api/              # WebSocket-маршрут и JSON сообщений
+│   └── service/          # Подписки и ограниченная очередь для каждого соединения
 └── tasks/
     ├── api/              # HTTP-маршруты, DTO и разбор параметров
     ├── service/          # Правила, нормализация и проверка данных
-    ├── domain/           # Task, TaskStatus и контракт репозитория
+    ├── domain/           # Task, TaskStatus, контракт репозитория и TaskChangePublisher
     └── data/             # TasksTable и PostgresTaskRepository на Exposed DSL
 
 src/main/resources/
@@ -83,6 +88,8 @@ src/main/resources/
 src/test/kotlin/com/vasilevyuv/
 ├── application/          # OpenAPI, Swagger, примеры запросов, логирование и обработка ошибок
 ├── tasks/api/            # Полный CRUD через администратора
+├── tasks/service/        # Отсутствие уведомлений при сбое хранилища
+├── notifications/        # WebSocket: JWT, доставка, отключение и очереди
 ├── auth/api/             # Регистрация, JWT, роли, создание администратора и миграция
 ├── auth/security/        # Ограничения настроек JWT и администратора
 └── support/              # Общая тестовая БД и HTTP-помощники
@@ -136,7 +143,14 @@ HTTP-ответы используют отдельные DTO без хэша п
 
 Фильтрация и сортировка выполняются в SQL. Поиск `q` трактует `%`, `_` и `\`
 как обычные символы, а значения передаются в запрос через параметры.
-В этапе WebSocket появится функциональный модуль `notifications`.
+
+После завершения транзакции `TaskService` публикует `TaskChange` через контракт
+`TaskChangePublisher`. `TaskNotificationHub` реализует этот контракт и раздаёт
+событие в отдельную очередь каждого подключённого клиента. `NotificationRoutes`
+преобразует событие в JSON и отправляет его через WebSocket. В `tasks` нет
+зависимости от Ktor WebSockets или реализации модуля `notifications`.
+Подписки существуют в памяти текущего приложения; при отключении освобождаются
+в `finally`, при остановке приложения закрываются все очереди.
 
 ## Запуск
 
@@ -271,6 +285,7 @@ Remove-Item Env:ADMIN_LOGIN, Env:ADMIN_PASSWORD -ErrorAction SilentlyContinue
 | `POST /auth/register` | Зарегистрировать пользователя | `201` | Публичный |
 | `POST /auth/login` | Проверить пароль и получить JWT | `200` | Публичный |
 | `GET /auth/me` | Текущий пользователь: ID, логин и роль | `200` | Bearer JWT, USER / ADMIN |
+| `GET /ws/tasks` (WebSocket Upgrade) | Подписка на изменения задач | `101`, затем JSON-кадры | Bearer JWT, USER / ADMIN |
 | `GET /tasks` | Список задач по возрастанию ID | `200` | Публичный |
 | `GET /tasks/{id}` | Одна задача по ID | `200` | Публичный |
 | `POST /tasks` | Создать задачу | `201`, заголовок `Location` | Bearer JWT, USER / ADMIN |
@@ -377,10 +392,10 @@ JSON используется во всех успешных ответах с �
 [Спецификация YAML](http://localhost:8080/openapi.yaml) доступна отдельно;
 её исходник — `src/main/resources/openapi/task-api.yaml`.
 
-Спецификация описывает девять операций API и два маршрута документации:
+Спецификация описывает девять HTTP-операций API, WebSocket-handshake и два маршрута документации:
 параметры пути и фильтров, JSON-схемы, обязательные поля, примеры, успешные ответы,
 ошибки и заголовки `Location`, `Cache-Control`, `WWW-Authenticate`.
-Схема `bearerAuth` обязательна у `/auth/me` и POST/PUT/DELETE задач.
+Схема `bearerAuth` обязательна у `/auth/me`, `/ws/tasks` и POST/PUT/DELETE задач.
 DELETE дополнительно требует ADMIN; ответ `403` описан отдельно от `401`.
 Статические файлы интерфейса раздаются под `/docs/` и `/docs/assets/`.
 
@@ -409,6 +424,101 @@ JS, CSS и значок Swagger входят в зависимости JAR (WebJ
 вместе с кодом. Тесты проверяют валидность спецификации, список операций,
 правила авторизации и выполняют примеры регистрации/входа/CRUD на настоящей БД.
 
+## WebSocket-уведомления
+
+Адрес: `ws://localhost:8080/ws/tasks` (при HTTPS — `wss://`). Соединение открывают
+USER и ADMIN с заголовком `Authorization: Bearer <JWT>`, полученным через обычный
+`POST /auth/login`. При отсутствии или недействительности JWT handshake получает
+`401 UNAUTHORIZED` с JSON до перехода на WebSocket. Проверяются те же подпись,
+issuer, audience, exp и существующий пользователь, что и у защищённых HTTP-маршрутов.
+Токен в URL/query не принимается.
+
+После ответа `101 Switching Protocols` сервер отправляет текстовые JSON-кадры:
+
+```json
+{"type":"READY"}
+{"type":"TASK_CREATED","taskId":1}
+{"type":"TASK_UPDATED","taskId":1}
+{"type":"TASK_DELETED","taskId":1}
+```
+
+`READY` подтверждает установку подписки. После него загрузите `GET /tasks` для
+начального состояния. События содержат только тип и ID: актуальные поля читаются
+через `GET /tasks/{id}` или повторную загрузку списка. К моменту уведомления
+транзакция PostgreSQL уже завершена; событие может прийти раньше HTTP-ответа
+на изменяющий запрос. Повторный успешный PUT тоже порождает `TASK_UPDATED`.
+Чтение, неверные данные, отказ `401`/`403`, отсутствующая задача и сбой записи
+не порождают событий об успешном изменении.
+
+Каждый подключённый клиент получает собственный поток, включая изменения,
+которые он инициировал через HTTP. Сообщения от клиента не изменяют задачи
+и не пересылаются другим: сервер закрывает такое соединение с кодом `1008`.
+Для изменения задач используются POST/PUT/DELETE с существующими проверками ролей.
+Истечение `exp` закрывает соединение с `1008`, даже если задач никто не меняет.
+Перед отправкой события повторно проверяется существование пользователя в БД;
+удалённому пользователю событие не отправляется, соединение закрывается с `1008`.
+
+У каждого подписчика очередь на 64 события. Запись задачи не ждёт сетевой отправки;
+переполнение очереди отключает только отстающего подписчика с кодом `1013`.
+Исходящая очередь Ktor также ограничена (16 кадров), ожидание отправки — 5 секунд.
+Сервер отправляет ping каждые 15 секунд, timeout — 15 секунд, максимальный кадр —
+4096 байт. Входящая очередь ограничена 8 кадрами и закрывается при переполнении.
+
+Доставка действует в пределах **одного экземпляра приложения**, без хранения
+истории и повторной отправки. При разрыве, перегрузке или перезапуске события
+могут быть потеряны: переподключитесь, дождитесь `READY` и перечитайте `GET /tasks`.
+Изменения напрямую в БД и через другие экземпляры приложения не транслируются.
+При одновременных изменениях уведомления служат сигналом перечитать состояние;
+их порядок не заменяет порядок транзакций в БД. Гарантированной доставки
+при сбое между commit БД и публикацией события на этом этапе нет.
+
+### Ручная проверка в PowerShell 7
+
+Откройте две PowerShell-сессии. В каждой войдите через `/auth/login`, как в примере
+HTTP ниже, чтобы получить `$session.accessToken`, и выполните:
+
+```powershell
+$socket = [System.Net.WebSockets.ClientWebSocket]::new()
+$socket.Options.SetRequestHeader('Authorization', "Bearer $($session.accessToken)")
+$cancel = [System.Threading.CancellationToken]::None
+try {
+    $null = $socket.ConnectAsync([Uri]'ws://localhost:8080/ws/tasks', $cancel).GetAwaiter().GetResult()
+    $buffer = [byte[]]::new(4096)
+    while ($socket.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
+        $message = [System.IO.MemoryStream]::new()
+        try {
+            do {
+                $pending = $socket.ReceiveAsync([ArraySegment[byte]]::new($buffer), $cancel)
+                while (-not $pending.IsCompleted) { Start-Sleep -Milliseconds 100 }
+                $frame = $pending.GetAwaiter().GetResult()
+                if ($frame.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) {
+                    Write-Output "Closed: $($frame.CloseStatus) $($frame.CloseStatusDescription)"
+                    $null = $socket.CloseOutputAsync($frame.CloseStatus, 'Acknowledged', $cancel).GetAwaiter().GetResult()
+                    return
+                }
+                $message.Write($buffer, 0, $frame.Count)
+            } until ($frame.EndOfMessage)
+            [Text.Encoding]::UTF8.GetString($message.ToArray())
+        } finally { $message.Dispose() }
+    }
+} finally {
+    $socket.Abort()
+    $socket.Dispose()
+}
+```
+
+После `READY` в обоих окнах создайте и обновите задачу через Swagger или третью
+PowerShell-сессию, затем удалите её как ADMIN. Оба слушателя должны получить
+CREATED, UPDATED и DELETED с одним ID. Ошибочное удаление от USER (`403`) не
+создаёт события. Закройте один слушатель через `Ctrl+C`: второй продолжит получать
+события. Новое соединение начнётся с READY без истории. После истечения JWT
+нужно снова войти и открыть новое соединение.
+
+Swagger UI показывает контракт handshake и схемы сообщений, но **Try it out**
+не открывает WebSocket. Стандартный браузерный `new WebSocket()` не позволяет
+задать заголовок Authorization; для этого контракта используйте клиент с поддержкой
+заголовков, например приведённый .NET-клиент или Ktor Client.
+
 ## Логирование запросов
 
 `configureRequestLogging()` устанавливает Ktor CallLogging. Logger `http.requests`
@@ -425,6 +535,8 @@ query и тела запросов/ответов не записываются:
 запроса не попадают в журнал доступа. Запросы файлов Swagger также журналируются.
 Неожиданные исключения отдельно пишутся в серверный журнал на уровне ERROR,
 клиент получает безопасный `500 INTERNAL_ERROR` без внутренних подробностей.
+Для WebSocket журналируется HTTP-handshake (`101` или `401`); его длительность
+не является временем жизни соединения. Содержимое WebSocket-сообщений не журналируется.
 
 ## Примеры запросов в PowerShell
 
@@ -515,7 +627,7 @@ StatusPages преобразует ошибки в общий формат:
 | `400` | `VALIDATION_ERROR` | Некорректные ID, статус, поля задачи или формат логина/пароля |
 | `400` | `INVALID_REQUEST` | Повреждённый JSON, неправильные типы, отсутствующие обязательные или неизвестные поля |
 | `401` | `INVALID_CREDENTIALS` | Неизвестный логин или неверный пароль |
-| `401` | `UNAUTHORIZED` | Для записи задачи или `/auth/me` отсутствует действительный Bearer JWT |
+| `401` | `UNAUTHORIZED` | Для записи задачи, `/auth/me` или WebSocket-handshake отсутствует действительный Bearer JWT |
 | `403` | `FORBIDDEN` | Токен действителен, но для удаления задачи требуется ADMIN |
 | `409` | `LOGIN_ALREADY_TAKEN` | Логин уже зарегистрирован |
 | `404` | `TASK_NOT_FOUND` | Нет задачи с таким ID |
@@ -534,6 +646,9 @@ StatusPages преобразует ошибки в общий формат:
 
 # Роли, создание администратора, миграция и настройки
 .\gradlew.bat test --tests '*RoleAccessTest' --tests '*AdminBootstrap*Test'
+
+# WebSocket и отсутствие событий при сбое хранилища
+.\gradlew.bat test --tests 'com.vasilevyuv.notifications.*' --tests '*TaskNotificationFailureTest'
 ```
 
 После первой успешной загрузки зависимостей можно добавить `--offline`.
@@ -579,7 +694,35 @@ Ktor Test Engine запускает настоящий модуль прилож
 Миграция проверяется на предыдущей схеме без `role`: пользователи, хэши,
 задачи и действующие JWT сохраняются.
 
-Результаты текущего этапа КТ4 — роли (22.10.2026):
+WebSocket-тесты проверяют доставку CREATED/UPDATED/DELETED обоим ролям,
+параллельные изменения, неуспешный handshake, отказ токену из query,
+отсутствие событий при ошибках и чтении, отключение и повторное подключение
+без истории, запрет сообщений клиента, истечение JWT и удаление пользователя.
+Отдельно проверяются переполнение очереди, независимость активного клиента
+от медленного, освобождение подписки и отсутствие публикации при ошибке хранилища.
+
+Результаты текущего этапа КТ4 — WebSocket (22.10.2026):
+
+- `./gradlew.bat test build` — успешная сборка, 87 тестов, 0 ошибок и 0 пропусков.
+  К 74 проверкам предыдущего этапа добавлены 8 WebSocket-проверок на PostgreSQL,
+  4 проверки очередей и подписок, 1 проверка отсутствия публикации при сбое хранилища.
+- Тесты подтверждают доставку всем подписчикам, конкурентные изменения,
+  применение JWT при подключении, закрытие по exp, отказ удалённому пользователю,
+  отсутствие событий при ошибках, переподключение без истории и ограничения очередей.
+- OpenAPI проходит Swagger Parser; handshake, авторизация и схемы уведомлений
+  согласованы с кодом. Существующие HTTP-примеры регистрации, входа и CRUD работают.
+- Собранный JAR проверен с Tomcat на `127.0.0.1:18081` через настоящие
+  HTTP-запросы и .NET ClientWebSocket. Отсутствующий и неверный JWT дают `401`;
+  USER и ADMIN подключаются с `101` и получают READY.
+- Оба клиента получили CREATED, UPDATED и DELETED с правильным ID.
+  Удаление от USER (`403`) не создало события; после отключения первого клиента
+  второй продолжил получать изменения. Новое соединение не получило историю.
+  Поддельное событие от клиента завершило только его соединение с кодом `1008`.
+- В журнале handshake подтверждены `401` и `101`. Проверочные записи удалены,
+  соединения и Java-процесс закрыты, PostgreSQL Compose остановлен, том сохранён.
+  Контейнеры Testcontainers удалены автоматически.
+
+История проверки КТ4 — роли (22.10.2026, коммит `effc53e`):
 
 - `./gradlew.bat test build` — успешная сборка, 74 теста, 0 ошибок и 0 пропусков.
   К 59 тестам предыдущего этапа добавлены 5 проверок доступа, 8 проверок
@@ -671,3 +814,6 @@ Ktor Test Engine запускает настоящий модуль прилож
 - [Swagger UI](https://github.com/swagger-api/swagger-ui)
 - [Swagger Parser](https://github.com/swagger-api/swagger-parser)
 - [CallLogging в Ktor](https://ktor.io/docs/server-call-logging.html)
+- [WebSockets в Ktor Server](https://ktor.io/docs/server-websockets.html)
+- [WebSockets в Ktor Client](https://ktor.io/docs/client-websockets.html)
+- [Настройка очередей WebSocket в Ktor](https://api.ktor.io/ktor-websockets/io.ktor.websocket/-web-socket-channels-config/index.html)

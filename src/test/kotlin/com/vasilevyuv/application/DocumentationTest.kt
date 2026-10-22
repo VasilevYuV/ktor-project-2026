@@ -47,6 +47,7 @@ class DocumentationTest : PostgresApiTest() {
             "/auth/register" to setOf(HttpMethod.POST),
             "/auth/login" to setOf(HttpMethod.POST),
             "/auth/me" to setOf(HttpMethod.GET),
+            "/ws/tasks" to setOf(HttpMethod.GET),
             "/tasks" to setOf(HttpMethod.GET, HttpMethod.POST),
             "/tasks/{id}" to setOf(HttpMethod.GET, HttpMethod.PUT, HttpMethod.DELETE),
             "/docs" to setOf(HttpMethod.GET),
@@ -67,7 +68,8 @@ class DocumentationTest : PostgresApiTest() {
         assertEquals("JWT", bearer.bearerFormat)
         for ((path, item) in api.paths) {
             for ((method, operation) in item.readOperationsMap()) {
-                val requiresToken = path == "/auth/me" || (path.startsWith("/tasks") && method != HttpMethod.GET)
+                val requiresToken = path in setOf("/auth/me", "/ws/tasks") ||
+                    (path.startsWith("/tasks") && method != HttpMethod.GET)
                 val security = operation.security ?: api.security
                 assertEquals(requiresToken, !security.isNullOrEmpty(), "$method $path")
                 if (requiresToken) {
@@ -89,6 +91,10 @@ class DocumentationTest : PostgresApiTest() {
         assertEquals(listOf("TODO", "IN_PROGRESS", "DONE"), schemas.getValue("TaskStatus").enum)
         assertTrue(api.paths.getValue("/tasks/{id}").delete.responses.getValue("204").content.isNullOrEmpty())
         assertTrue(api.paths.getValue("/tasks/{id}").delete.responses.containsKey("403"))
+        assertEquals(setOf("101", "401", "500"), api.paths.getValue("/ws/tasks").get.responses.keys)
+        assertEquals(setOf("type", "taskId"), schemas.getValue("TaskNotification").required.toSet())
+        assertEquals(listOf("TASK_CREATED", "TASK_UPDATED", "TASK_DELETED"),
+            schemas.getValue("TaskNotification").properties.getValue("type").enum)
     }
 
     @Test

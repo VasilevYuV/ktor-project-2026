@@ -22,8 +22,9 @@ fun Application.configureAuthentication(tokens: JwtTokenService, users: UserRepo
             validate { credential ->
                 val payload = credential.payload
                 val userId = payload.getClaim("userId").asString()?.toLongOrNull()
-                if (payload.expiresAt != null && userId != null && userId > 0) {
-                    users.findById(userId)?.let { AuthenticatedUser(it.id, it.login, it.role) }
+                val expiresAt = payload.expiresAt?.toInstant()
+                if (expiresAt != null && userId != null && userId > 0) {
+                    users.findById(userId)?.let { AuthenticatedUser(it.id, it.login, it.role, expiresAt) }
                 } else {
                     null
                 }
