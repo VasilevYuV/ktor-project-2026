@@ -1,0 +1,455 @@
+openapi: 3.0.3
+info:
+  title: Task API
+  version: 1.0.0
+  description: |
+    Учебный API задач, КТ3. Чтение публичное; POST/PUT/DELETE задач требуют JWT.
+    Зарегистрируйтесь, выполните вход и вставьте accessToken в Authorize без префикса Bearer.
+    Токен проверяется по подписи HS256, issuer, audience, сроку exp и userId существующего пользователя.
+    По умолчанию срок токена — 3600 секунд; после истечения нужно снова войти.
+    Любой вошедший пользователь может изменять любую задачу; роли появятся в КТ4.
+    Неизвестные поля JSON отклоняются. Ошибки имеют единый формат ApiError.
+servers:
+  - url: /
+    description: Текущий сервер
+security: []
+tags:
+  - name: System
+    description: Информация о приложении и документация
+  - name: Auth
+    description: Регистрация и вход
+  - name: Tasks
+    description: Создание, чтение, обновление и удаление задач
+
+paths:
+  /:
+    get:
+      tags: [System]
+      operationId: getApiInfo
+      summary: Информация об API
+      responses:
+        '200':
+          description: Название приложения и текущая контрольная точка
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiInfo'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      operationId: registerUser
+      summary: Зарегистрировать пользователя
+      description: |
+        Логин нормализуется в нижний регистр с обрезкой пробелов по краям.
+        Уникальность проверяется в PostgreSQL, включая одновременные регистрации.
+        Пароль сохраняется как BCrypt-хэш с индивидуальной солью и cost 12.
+      requestBody:
+        $ref: '#/components/requestBodies/Credentials'
+      responses:
+        '201':
+          description: Пользователь создан; пароль и хэш не возвращаются
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Логин уже занят; существующий пароль не изменяется
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { code: LOGIN_ALREADY_TAKEN, message: Login is already taken }
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: loginUser
+      summary: Войти и получить JWT
+      description: |
+        Проверяет пароль через BCrypt. Неизвестный логин и неверный пароль
+        возвращают одинаковую ошибку INVALID_CREDENTIALS. Ошибки формата — 400.
+      requestBody:
+        $ref: '#/components/requestBodies/Credentials'
+      responses:
+        '200':
+          description: JWT для заголовка Authorization
+          headers:
+            Cache-Control:
+              description: Ответ с токеном не должен сохраняться в кэше
+              schema: { type: string, example: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Неизвестный логин или неверный пароль
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example: { code: INVALID_CREDENTIALS, message: Invalid login or password }
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /tasks:
+    get:
+      tags: [Tasks]
+      operationId: listTasks
+      summary: Получить список задач
+      description: |
+        Сортировка по возрастанию ID. Фильтры status и q можно комбинировать.
+        Пустой результат возвращается как массив [], а не ошибка 404.
+      parameters:
+        - name: status
+          in: query
+          description: Точное имя статуса в верхнем регистре
+          schema:
+            $ref: '#/components/schemas/TaskStatus'
+        - name: q
+          in: query
+          description: |
+            Подстрока названия без учёта регистра, до 200 символов после обрезки пробелов.
+            Пустая строка не ограничивает список. Символы %, _ и обратная косая черта ищутся буквально.
+          schema: { type: string, example: Kotlin }
+      responses:
+        '200':
+          description: Список задач
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Tasks]
+      operationId: createTask
+      summary: Создать задачу
+      description: ID назначается сервером. Отсутствующие description и status получают значения по умолчанию.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: Задача создана
+          headers:
+            Location:
+              description: Относительный путь к созданной задаче
+              schema: { type: string, example: /tasks/1 }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [Tasks]
+      operationId: getTask
+      summary: Получить задачу по ID
+      responses:
+        '200':
+          description: Найденная задача
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Tasks]
+      operationId: updateTask
+      summary: Полностью обновить задачу
+      description: |
+        title, description и status обязательны. Пустая строка очищает описание.
+        ID сохраняется. Повтор запроса идемпотентен; отсутствующая задача не создаётся.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+      responses:
+        '200':
+          description: Обновлённая задача
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags: [Tasks]
+      operationId: deleteTask
+      summary: Удалить задачу
+      description: Успешный ответ не содержит тела. Повторное удаление возвращает 404.
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Задача удалена; тело отсутствует
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/TaskNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /docs:
+    get:
+      tags: [System]
+      operationId: getSwaggerUi
+      summary: Открыть Swagger UI
+      responses:
+        '200':
+          description: Интерактивная документация с локальными JS и CSS
+          content:
+            text/html:
+              schema: { type: string }
+  /openapi.yaml:
+    get:
+      tags: [System]
+      operationId: getOpenApi
+      summary: Скачать спецификацию OpenAPI
+      responses:
+        '200':
+          description: Этот документ в формате YAML
+          content:
+            application/yaml:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Вставьте accessToken из POST /auth/login. Префикс Bearer добавляется автоматически.
+
+  parameters:
+    TaskId:
+      name: id
+      in: path
+      required: true
+      description: Положительный ID задачи в диапазоне Kotlin Long
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+        maximum: 9223372036854775807
+        example: 1
+
+  requestBodies:
+    Credentials:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Credentials'
+
+  schemas:
+    ApiInfo:
+      type: object
+      additionalProperties: false
+      required: [name, checkpoint]
+      properties:
+        name: { type: string, example: Task API }
+        checkpoint: { type: string, example: KT3 }
+      example: { name: Task API, checkpoint: KT3 }
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [login, password]
+      properties:
+        login:
+          type: string
+          description: От 3 до 32 латинских букв, цифр или _ после обрезки пробелов; регистр не учитывается
+          example: student
+        password:
+          type: string
+          format: password
+          writeOnly: true
+          minLength: 8
+          maxLength: 72
+          description: |
+            От 8 символов, но не более 72 байт UTF-8; строка только из пробелов недопустима.
+            Пробелы и регистр значимы. Для кириллицы/эмодзи ограничение в байтах строже maxLength.
+          example: Study-password-2026!
+      example: { login: student, password: Study-password-2026! }
+    UserResponse:
+      type: object
+      additionalProperties: false
+      required: [id, login]
+      properties:
+        id: { type: integer, format: int64, minimum: 1 }
+        login: { type: string }
+      example: { id: 1, login: student }
+    TokenResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, expiresIn, tokenType]
+      properties:
+        accessToken: { type: string, description: 'JWT с claims iss, aud, iat, exp и строковым userId' }
+        expiresIn: { type: integer, format: int64, minimum: 1, maximum: 86400, description: Срок действия в секундах }
+        tokenType: { type: string, enum: [Bearer] }
+      example: { accessToken: '<JWT from login>', expiresIn: 3600, tokenType: Bearer }
+    TaskStatus:
+      type: string
+      enum: [TODO, IN_PROGRESS, DONE]
+      example: IN_PROGRESS
+    TaskTitle:
+      type: string
+      description: От 1 до 200 символов после обрезки пробелов по краям; пустое название недопустимо
+      example: Изучить Ktor
+    TaskDescription:
+      type: string
+      description: До 2000 символов после обрезки пробелов по краям; пустая строка разрешена
+      example: Маршруты и JSON
+    CreateTaskRequest:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title:
+          $ref: '#/components/schemas/TaskTitle'
+        description:
+          type: string
+          default: ''
+          description: До 2000 символов после обрезки пробелов по краям
+        status:
+          type: string
+          enum: [TODO, IN_PROGRESS, DONE]
+          default: TODO
+      example: { title: Изучить Ktor, description: Маршруты и JSON, status: IN_PROGRESS }
+    UpdateTaskRequest:
+      type: object
+      additionalProperties: false
+      required: [title, description, status]
+      properties:
+        title:
+          $ref: '#/components/schemas/TaskTitle'
+        description:
+          $ref: '#/components/schemas/TaskDescription'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+      example: { title: Изучить OpenAPI, description: Документация готова, status: DONE }
+    TaskResponse:
+      type: object
+      additionalProperties: false
+      required: [id, title, description, status]
+      properties:
+        id: { type: integer, format: int64, minimum: 1 }
+        title:
+          $ref: '#/components/schemas/TaskTitle'
+        description:
+          $ref: '#/components/schemas/TaskDescription'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+      example: { id: 1, title: Изучить Ktor, description: Маршруты и JSON, status: IN_PROGRESS }
+    ApiError:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          enum: [VALIDATION_ERROR, INVALID_REQUEST, INVALID_CREDENTIALS, UNAUTHORIZED, LOGIN_ALREADY_TAKEN, TASK_NOT_FOUND, ROUTE_NOT_FOUND, UNSUPPORTED_MEDIA_TYPE, INTERNAL_ERROR]
+        message: { type: string }
+      example: { code: VALIDATION_ERROR, message: id must be a positive integer }
+
+  responses:
+    BadRequest:
+      description: Ошибка значений (VALIDATION_ERROR) или формы JSON (INVALID_REQUEST)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            validation:
+              value: { code: VALIDATION_ERROR, message: id must be a positive integer }
+            json:
+              value: { code: INVALID_REQUEST, message: Request body must be valid JSON with the expected fields }
+    Unauthorized:
+      description: Нет действительного Bearer JWT; аутентификация выполняется до проверки параметров и тела
+      headers:
+        WWW-Authenticate:
+          schema: { type: string, example: 'Bearer realm="Task API"' }
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { code: UNAUTHORIZED, message: A valid Bearer token is required }
+    TaskNotFound:
+      description: Задача с таким ID не найдена
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { code: TASK_NOT_FOUND, message: Task 1 was not found }
+    RouteNotFound:
+      description: Неизвестный путь возвращает 404 с этим JSON, включая отсутствующие файлы документации
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { code: ROUTE_NOT_FOUND, message: Route was not found }
+    UnsupportedMediaType:
+      description: Тело запроса передано не как application/json
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { code: UNSUPPORTED_MEDIA_TYPE, message: 'Use Content-Type: application/json' }
+    InternalError:
+      description: Неожиданная ошибка; детали доступны только в серверном журнале
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example: { code: INTERNAL_ERROR, message: An unexpected error occurred }

@@ -28,6 +28,7 @@ fun Application.module() {
         transaction(connection.database) { SchemaUtils.create(TasksTable, UsersTable) }
         configureSerialization()
         configureErrors()
+        configureRequestLogging()
 
         val users = PostgresUserRepository(connection.database)
         val authService = AuthService(users, BCryptPasswordHasher())
@@ -36,10 +37,11 @@ fun Application.module() {
 
         routing {
             get("/") {
-                call.respond(mapOf("name" to "Task API", "checkpoint" to "KT2"))
+                call.respond(mapOf("name" to "Task API", "checkpoint" to "KT3"))
             }
             authRoutes(authService, tokens)
             taskRoutes(taskService, JWT_AUTH)
+            documentationRoutes()
         }
         monitor.subscribe(ApplicationStopped) { connection.close() }
     } catch (cause: Exception) {

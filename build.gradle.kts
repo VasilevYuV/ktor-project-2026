@@ -21,6 +21,7 @@ dependencies {
     implementation(ktorLibs.server.contentNegotiation)
     implementation(ktorLibs.serialization.kotlinx.json)
     implementation(ktorLibs.server.statusPages)
+    implementation(ktorLibs.server.callLogging)
     implementation(ktorLibs.server.auth.asProvider())
     implementation(ktorLibs.server.auth.jwt)
     implementation(libs.logback.classic)
@@ -29,8 +30,18 @@ dependencies {
     implementation(libs.hikari)
     implementation(libs.postgresql)
     implementation(libs.bcrypt)
+    runtimeOnly(libs.swagger.ui)
 
     testImplementation(kotlin("test"))
     testImplementation(ktorLibs.server.testHost)
     testImplementation(libs.testcontainers.postgresql)
+    testImplementation(libs.swagger.parser)
+}
+
+tasks.processResources {
+    val swaggerUiVersion = libs.versions.swagger.ui.get()
+    inputs.property("swaggerUiVersion", swaggerUiVersion)
+    filesMatching("documentation/index.html") {
+        expand("swaggerUiVersion" to swaggerUiVersion)
+    }
 }
