@@ -1,0 +1,12 @@
+# Only sources and build configuration are needed. Keep local state and secrets out of the build context.
+**
+!Dockerfile
+!gradlew
+!gradle.properties
+!settings.gradle.kts
+!build.gradle.kts
+!gradle/
+!gradle/**
+!src/
+!src/main/
+!src/main/**

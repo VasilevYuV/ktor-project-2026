@@ -44,7 +44,7 @@ fun Application.module() {
 
         routing {
             get("/") {
-                call.respond(mapOf("name" to "Task API", "checkpoint" to "KT4 WebSocket"))
+                call.respond(mapOf("name" to "Task API", "checkpoint" to "KT4"))
             }
             authRoutes(authService, tokens, JWT_AUTH)
             taskRoutes(taskService, JWT_AUTH)

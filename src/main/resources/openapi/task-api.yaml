@@ -3,7 +3,7 @@ info:
   title: Task API
   version: 1.0.0
   description: |
-    Учебный API задач, КТ4: роли и WebSocket. Чтение публичное; POST/PUT/DELETE задач требуют JWT.
+    Учебный API задач, КТ4. Чтение публичное; POST/PUT/DELETE задач требуют JWT.
     Зарегистрируйтесь, выполните вход и вставьте accessToken в Authorize без префикса Bearer.
     Токен проверяется по подписи HS256, issuer, audience, сроку exp и userId существующего пользователя.
     По умолчанию срок токена — 3600 секунд; после истечения нужно снова войти.
@@ -363,8 +363,8 @@ components:
       required: [name, checkpoint]
       properties:
         name: { type: string, example: Task API }
-        checkpoint: { type: string, example: KT4 WebSocket }
-      example: { name: Task API, checkpoint: KT4 WebSocket }
+        checkpoint: { type: string, example: KT4 }
+      example: { name: Task API, checkpoint: KT4 }
     NotificationReady:
       type: object
       additionalProperties: false
