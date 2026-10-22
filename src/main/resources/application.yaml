@@ -10,3 +10,9 @@ database:
   user: "$DATABASE_USER:kotlin"
   password: "$DATABASE_PASSWORD"
   poolSize: "$DATABASE_POOL_SIZE:5"
+
+jwt:
+  secret: "$JWT_SECRET"
+  issuer: "$JWT_ISSUER:kotlin-task-api"
+  audience: "$JWT_AUDIENCE:kotlin-task-client"
+  expiresInSeconds: "$JWT_EXPIRES_IN_SECONDS:3600"

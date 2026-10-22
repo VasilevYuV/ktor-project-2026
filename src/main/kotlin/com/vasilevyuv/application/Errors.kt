@@ -1,5 +1,7 @@
 package com.vasilevyuv.application
 
+import com.vasilevyuv.auth.domain.InvalidCredentialsException
+import com.vasilevyuv.auth.domain.LoginAlreadyTakenException
 import com.vasilevyuv.common.api.ApiError
 import com.vasilevyuv.common.domain.ValidationException
 import com.vasilevyuv.tasks.domain.TaskNotFoundException
@@ -15,6 +17,12 @@ import kotlin.coroutines.cancellation.CancellationException
 
 fun Application.configureErrors() {
     install(StatusPages) {
+        exception<LoginAlreadyTakenException> { call, _ ->
+            call.respond(HttpStatusCode.Conflict, ApiError("LOGIN_ALREADY_TAKEN", "Login is already taken"))
+        }
+        exception<InvalidCredentialsException> { call, _ ->
+            call.respond(HttpStatusCode.Unauthorized, ApiError("INVALID_CREDENTIALS", "Invalid login or password"))
+        }
         exception<ValidationException> { call, cause ->
             call.respond(HttpStatusCode.BadRequest, ApiError("VALIDATION_ERROR", cause.message))
         }

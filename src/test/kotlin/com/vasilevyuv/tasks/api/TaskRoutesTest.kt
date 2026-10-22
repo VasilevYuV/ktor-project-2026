@@ -1,7 +1,7 @@
 package com.vasilevyuv.tasks.api
 
-import com.vasilevyuv.application.module
-import com.vasilevyuv.common.api.ApiError
+import com.vasilevyuv.support.PostgresApiTest
+import com.vasilevyuv.support.assertError
 import io.ktor.client.HttpClient
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -15,23 +15,17 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
-import io.ktor.server.config.MapApplicationConfig
-import io.ktor.server.testing.ApplicationTestBuilder
-import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
-import org.junit.AfterClass
-import org.junit.BeforeClass
-import org.testcontainers.postgresql.PostgreSQLContainer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-class TaskRoutesTest {
+class TaskRoutesTest : PostgresApiTest() {
     @Test
-    fun `root describes the API in JSON`() = apiTest {
+    fun `root describes the API in JSON`() = apiTest(authenticated = true) {
         val response = client.get("/")
 
         assertEquals(HttpStatusCode.OK, response.status)
@@ -40,7 +34,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `list starts empty`() = apiTest {
+    fun `list starts empty`() = apiTest(authenticated = true) {
         val response = client.get("/tasks")
 
         assertEquals(HttpStatusCode.OK, response.status)
@@ -48,7 +42,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `create assigns an id and defaults and returns a location`() = apiTest {
+    fun `create assigns an id and defaults and returns a location`() = apiTest(authenticated = true) {
         val response = client.createTask("  Learn Kotlin  ")
         val task = response.task()
 
@@ -62,7 +56,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `get returns the stored task with all fields`() = apiTest {
+    fun `get returns the stored task with all fields`() = apiTest(authenticated = true) {
         val created = client.createTask("Read docs", "  Ktor routing  ", "IN_PROGRESS").task()
         val response = client.get("/tasks/${created.id}")
 
@@ -73,7 +67,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `list is ordered by id and filters by status`() = apiTest {
+    fun `list is ordered by id and filters by status`() = apiTest(authenticated = true) {
         val first = client.createTask("First").task()
         val done = client.createTask("Second", status = "DONE").task()
         val third = client.createTask("Third").task()
@@ -84,7 +78,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `search ignores case and combines with the status filter`() = apiTest {
+    fun `search ignores case and combines with the status filter`() = apiTest(authenticated = true) {
         client.createTask("Learn Kotlin")
         val matching = client.createTask("Read KOTLIN docs", status = "DONE").task()
         client.createTask("Learn Ktor", status = "DONE")
@@ -97,14 +91,14 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `blank search means all tasks`() = apiTest {
+    fun `blank search means all tasks`() = apiTest(authenticated = true) {
         val task = client.createTask("Learn Kotlin").task()
 
         assertEquals(listOf(task), client.get("/tasks?q=%20%20").tasks())
     }
 
     @Test
-    fun `delete returns an empty 204 and removes only the requested task`() = apiTest {
+    fun `delete returns an empty 204 and removes only the requested task`() = apiTest(authenticated = true) {
         val removed = client.createTask("Remove me").task()
         val remaining = client.createTask("Keep me").task()
 
@@ -118,7 +112,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `ids are not reused after deletion`() = apiTest {
+    fun `ids are not reused after deletion`() = apiTest(authenticated = true) {
         val removed = client.createTask("First").task()
         client.delete("/tasks/${removed.id}")
         val created = client.createTask("Second").task()
@@ -127,7 +121,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `invalid path ids return 400`() = apiTest {
+    fun `invalid path ids return 400`() = apiTest(authenticated = true) {
         for (id in listOf("abc", "0", "-1", "1.5", "9223372036854775808")) {
             client.get("/tasks/$id").assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
             client.delete("/tasks/$id").assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
@@ -136,7 +130,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `missing tasks return 404`() = apiTest {
+    fun `missing tasks return 404`() = apiTest(authenticated = true) {
         client.get("/tasks/999").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
         client.delete("/tasks/999").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
         client.updateTask("999").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
@@ -144,12 +138,12 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `unknown routes return a JSON error`() = apiTest {
+    fun `unknown routes return a JSON error`() = apiTest(authenticated = true) {
         client.get("/missing").assertError(HttpStatusCode.NotFound, "ROUTE_NOT_FOUND")
     }
 
     @Test
-    fun `invalid statuses are rejected in query and body`() = apiTest {
+    fun `invalid statuses are rejected in query and body`() = apiTest(authenticated = true) {
         for (status in listOf("", "done", "UNKNOWN")) {
             client.get("/tasks?status=$status").assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
             client.createTask("Task", status = status)
@@ -159,7 +153,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `blank or oversized fields are rejected without creating tasks`() = apiTest {
+    fun `blank or oversized fields are rejected without creating tasks`() = apiTest(authenticated = true) {
         for (title in listOf("", "   ", "a".repeat(201))) {
             client.createTask(title).assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
         }
@@ -169,7 +163,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `field length limits are inclusive`() = apiTest {
+    fun `field length limits are inclusive`() = apiTest(authenticated = true) {
         val response = client.createTask("a".repeat(200), "b".repeat(2_000))
 
         assertEquals(HttpStatusCode.Created, response.status)
@@ -178,12 +172,12 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `oversized search returns 400`() = apiTest {
+    fun `oversized search returns 400`() = apiTest(authenticated = true) {
         client.get("/tasks?q=${"a".repeat(201)}").assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
     }
 
     @Test
-    fun `malformed JSON and invalid body shapes return 400`() = apiTest {
+    fun `malformed JSON and invalid body shapes return 400`() = apiTest(authenticated = true) {
         val bodies = listOf(
             "",
             "{",
@@ -204,7 +198,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `non JSON request body returns 415`() = apiTest {
+    fun `non JSON request body returns 415`() = apiTest(authenticated = true) {
         client.post("/tasks") {
             contentType(ContentType.Text.Plain)
             setBody("Task")
@@ -212,7 +206,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `put replaces all fields and preserves the id`() = apiTest {
+    fun `put replaces all fields and preserves the id`() = apiTest(authenticated = true) {
         val created = client.createTask("Before", "Old description").task()
         val other = client.createTask("Keep me").task()
 
@@ -227,7 +221,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `repeating put is idempotent and allows clearing the description`() = apiTest {
+    fun `repeating put is idempotent and allows clearing the description`() = apiTest(authenticated = true) {
         val created = client.createTask("Before", "Description").task()
 
         repeat(2) {
@@ -239,7 +233,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `invalid update leaves the existing task unchanged`() = apiTest {
+    fun `invalid update leaves the existing task unchanged`() = apiTest(authenticated = true) {
         val created = client.createTask("Original", "Keep this", "IN_PROGRESS").task()
         val id = created.id.toString()
 
@@ -254,7 +248,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `put requires all fields and rejects malformed bodies and client ids`() = apiTest {
+    fun `put requires all fields and rejects malformed bodies and client ids`() = apiTest(authenticated = true) {
         val created = client.createTask("Original").task()
         val bodies = listOf(
             "{", "{}", "[]", "null",
@@ -275,7 +269,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `put rejects non JSON bodies`() = apiTest {
+    fun `put rejects non JSON bodies`() = apiTest(authenticated = true) {
         val created = client.createTask("Original").task()
         client.put("/tasks/${created.id}") {
             contentType(ContentType.Text.Plain)
@@ -285,7 +279,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `update accepts the maximum field lengths`() = apiTest {
+    fun `update accepts the maximum field lengths`() = apiTest(authenticated = true) {
         val created = client.createTask("Original").task()
         val response = client.updateTask(created.id.toString(), "a".repeat(200), "b".repeat(2_000))
 
@@ -295,7 +289,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `search treats SQL wildcards and quotes as literal text`() = apiTest {
+    fun `search treats SQL wildcards and quotes as literal text`() = apiTest(authenticated = true) {
         client.createTask("Ordinary task")
         for (query in listOf("%", "_", "\\", "' OR 1=1 --")) {
             val matching = client.createTask("Search $query here").task()
@@ -306,7 +300,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `database preserves Unicode and searches Cyrillic without case sensitivity`() = apiTest {
+    fun `database preserves Unicode and searches Cyrillic without case sensitivity`() = apiTest(authenticated = true) {
         val created = client.createTask("Изучить Kotlin", "Задача с кириллицей").task()
         val response = client.get("/tasks") { parameter("q", "ИЗУЧИТЬ") }
 
@@ -315,7 +309,7 @@ class TaskRoutesTest {
     }
 
     @Test
-    fun `concurrent creates produce distinct persisted tasks`() = apiTest {
+    fun `concurrent creates produce distinct persisted tasks`() = apiTest(authenticated = true) {
         val created = coroutineScope {
             (1..20).map { index ->
                 async {
@@ -333,45 +327,22 @@ class TaskRoutesTest {
     @Test
     fun `changes survive application and connection pool restarts`() {
         lateinit var saved: TaskResponse
-        apiTest {
+        apiTest(authenticated = true) {
             saved = client.createTask("Persist me", "Initial").task()
             saved = client.updateTask(saved.id.toString(), "Updated", "Persisted", "DONE").task()
         }
 
-        apiTest(resetData = false) {
+        apiTest(resetData = false, authenticated = true) {
             assertEquals(saved, client.get("/tasks/${saved.id}").task())
             val next = client.createTask("Next task").task()
             assertTrue(next.id > saved.id)
             assertEquals(HttpStatusCode.NoContent, client.delete("/tasks/${saved.id}").status)
         }
 
-        apiTest(resetData = false) {
+        apiTest(resetData = false, authenticated = true) {
             client.get("/tasks/${saved.id}").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
             assertEquals("Next task", client.get("/tasks").tasks().single().title)
         }
-    }
-
-    private fun apiTest(
-        resetData: Boolean = true,
-        block: suspend ApplicationTestBuilder.() -> Unit,
-    ) = testApplication {
-        environment {
-            config = MapApplicationConfig(
-                "database.url" to postgres.jdbcUrl,
-                "database.user" to postgres.username,
-                "database.password" to postgres.password,
-                "database.poolSize" to "3",
-            )
-        }
-        application { module() }
-        startApplication()
-        if (resetData) {
-            // Only the disposable database owned by this test class is reset.
-            postgres.createConnection("").use { connection ->
-                connection.createStatement().use { it.execute("TRUNCATE TABLE tasks RESTART IDENTITY") }
-            }
-        }
-        block()
     }
 
     private suspend fun HttpClient.updateTask(
@@ -397,27 +368,4 @@ class TaskRoutesTest {
 
     private suspend fun HttpResponse.tasks(): List<TaskResponse> = Json.decodeFromString(bodyAsText())
 
-    private suspend fun HttpResponse.assertError(expectedStatus: HttpStatusCode, expectedCode: String) {
-        assertEquals(expectedStatus, status, bodyAsText())
-        assertEquals(ContentType.Application.Json, contentType()?.withoutParameters())
-        val error = Json.decodeFromString<ApiError>(bodyAsText())
-        assertEquals(expectedCode, error.code)
-        assertTrue(error.message.isNotBlank())
-    }
-
-    companion object {
-        private val postgres = PostgreSQLContainer("postgres:18.6-alpine")
-
-        @BeforeClass
-        @JvmStatic
-        fun startDatabase() {
-            postgres.start()
-        }
-
-        @AfterClass
-        @JvmStatic
-        fun stopDatabase() {
-            postgres.stop()
-        }
-    }
 }

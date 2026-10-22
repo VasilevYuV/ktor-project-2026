@@ -5,6 +5,7 @@ import com.vasilevyuv.tasks.domain.TaskStatus
 import com.vasilevyuv.tasks.service.TaskService
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.auth.authenticate
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -14,7 +15,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 
-fun Route.taskRoutes(service: TaskService) {
+fun Route.taskRoutes(service: TaskService, authenticationProvider: String) {
     route("/tasks") {
         get {
             val status = call.request.queryParameters["status"]?.let(::parseTaskStatus)
@@ -25,22 +26,24 @@ fun Route.taskRoutes(service: TaskService) {
             val id = parseTaskId(call.parameters["id"])
             call.respond(service.get(id).toResponse())
         }
-        post {
-            val request = call.receive<CreateTaskRequest>()
-            val task = service.create(request.title, request.description, parseTaskStatus(request.status))
-            call.response.headers.append(HttpHeaders.Location, "/tasks/${task.id}")
-            call.respond(HttpStatusCode.Created, task.toResponse())
-        }
-        put("/{id}") {
-            val id = parseTaskId(call.parameters["id"])
-            val request = call.receive<UpdateTaskRequest>()
-            val task = service.update(id, request.title, request.description, parseTaskStatus(request.status))
-            call.respond(task.toResponse())
-        }
-        delete("/{id}") {
-            val id = parseTaskId(call.parameters["id"])
-            service.delete(id)
-            call.respond(HttpStatusCode.NoContent)
+        authenticate(authenticationProvider) {
+            post {
+                val request = call.receive<CreateTaskRequest>()
+                val task = service.create(request.title, request.description, parseTaskStatus(request.status))
+                call.response.headers.append(HttpHeaders.Location, "/tasks/${task.id}")
+                call.respond(HttpStatusCode.Created, task.toResponse())
+            }
+            put("/{id}") {
+                val id = parseTaskId(call.parameters["id"])
+                val request = call.receive<UpdateTaskRequest>()
+                val task = service.update(id, request.title, request.description, parseTaskStatus(request.status))
+                call.respond(task.toResponse())
+            }
+            delete("/{id}") {
+                val id = parseTaskId(call.parameters["id"])
+                service.delete(id)
+                call.respond(HttpStatusCode.NoContent)
+            }
         }
     }
 }
