@@ -11,6 +11,7 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 
 fun Route.taskRoutes(service: TaskService) {
@@ -29,6 +30,12 @@ fun Route.taskRoutes(service: TaskService) {
             val task = service.create(request.title, request.description, parseTaskStatus(request.status))
             call.response.headers.append(HttpHeaders.Location, "/tasks/${task.id}")
             call.respond(HttpStatusCode.Created, task.toResponse())
+        }
+        put("/{id}") {
+            val id = parseTaskId(call.parameters["id"])
+            val request = call.receive<UpdateTaskRequest>()
+            val task = service.update(id, request.title, request.description, parseTaskStatus(request.status))
+            call.respond(task.toResponse())
         }
         delete("/{id}") {
             val id = parseTaskId(call.parameters["id"])

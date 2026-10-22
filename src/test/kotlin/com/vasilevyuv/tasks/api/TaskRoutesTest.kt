@@ -1,10 +1,13 @@
 package com.vasilevyuv.tasks.api
 
+import com.vasilevyuv.application.module
 import com.vasilevyuv.common.api.ApiError
 import io.ktor.client.HttpClient
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -12,9 +15,16 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.server.config.MapApplicationConfig
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
+import org.junit.AfterClass
+import org.junit.BeforeClass
+import org.testcontainers.postgresql.PostgreSQLContainer
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -121,6 +131,7 @@ class TaskRoutesTest {
         for (id in listOf("abc", "0", "-1", "1.5", "9223372036854775808")) {
             client.get("/tasks/$id").assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
             client.delete("/tasks/$id").assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
+            client.updateTask(id).assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
         }
     }
 
@@ -128,6 +139,8 @@ class TaskRoutesTest {
     fun `missing tasks return 404`() = apiTest {
         client.get("/tasks/999").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
         client.delete("/tasks/999").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
+        client.updateTask("999").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
+        assertEquals(emptyList(), client.get("/tasks").tasks())
     }
 
     @Test
@@ -198,10 +211,177 @@ class TaskRoutesTest {
         }.assertError(HttpStatusCode.UnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE")
     }
 
-    private fun apiTest(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
-        // Load application.yaml as the real server does; each test gets a fresh repository.
-        configure()
+    @Test
+    fun `put replaces all fields and preserves the id`() = apiTest {
+        val created = client.createTask("Before", "Old description").task()
+        val other = client.createTask("Keep me").task()
+
+        val response = client.updateTask(created.id.toString(), "  After  ", "  New description  ", "DONE")
+        val expected = TaskResponse(created.id, "After", "New description", "DONE")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(expected, response.task())
+        assertEquals(expected, client.get("/tasks/${created.id}").task())
+        assertEquals(other, client.get("/tasks/${other.id}").task())
+        assertEquals(listOf(expected), client.get("/tasks?status=DONE&q=after").tasks())
+    }
+
+    @Test
+    fun `repeating put is idempotent and allows clearing the description`() = apiTest {
+        val created = client.createTask("Before", "Description").task()
+
+        repeat(2) {
+            val response = client.updateTask(created.id.toString(), "After", "", "TODO")
+            assertEquals(HttpStatusCode.OK, response.status)
+            assertEquals(TaskResponse(created.id, "After", "", "TODO"), response.task())
+        }
+        assertEquals(1, client.get("/tasks").tasks().size)
+    }
+
+    @Test
+    fun `invalid update leaves the existing task unchanged`() = apiTest {
+        val created = client.createTask("Original", "Keep this", "IN_PROGRESS").task()
+        val id = created.id.toString()
+
+        for (title in listOf("", "   ", "a".repeat(201))) {
+            client.updateTask(id, title = title).assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
+        }
+        client.updateTask(id, description = "a".repeat(2_001))
+            .assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
+        client.updateTask(id, status = "unknown").assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
+
+        assertEquals(created, client.get("/tasks/$id").task())
+    }
+
+    @Test
+    fun `put requires all fields and rejects malformed bodies and client ids`() = apiTest {
+        val created = client.createTask("Original").task()
+        val bodies = listOf(
+            "{", "{}", "[]", "null",
+            """{"title":"After"}""",
+            """{"title":"After","description":""}""",
+            """{"title":"After","status":"DONE"}""",
+            """{"title":"After","description":null,"status":"DONE"}""",
+            """{"title":42,"description":"","status":"DONE"}""",
+            """{"title":"After","description":"","status":"DONE","id":99}""",
+        )
+        for (body in bodies) {
+            client.put("/tasks/${created.id}") {
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }.assertError(HttpStatusCode.BadRequest, "INVALID_REQUEST")
+        }
+        assertEquals(created, client.get("/tasks/${created.id}").task())
+    }
+
+    @Test
+    fun `put rejects non JSON bodies`() = apiTest {
+        val created = client.createTask("Original").task()
+        client.put("/tasks/${created.id}") {
+            contentType(ContentType.Text.Plain)
+            setBody("After")
+        }.assertError(HttpStatusCode.UnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE")
+        assertEquals(created, client.get("/tasks/${created.id}").task())
+    }
+
+    @Test
+    fun `update accepts the maximum field lengths`() = apiTest {
+        val created = client.createTask("Original").task()
+        val response = client.updateTask(created.id.toString(), "a".repeat(200), "b".repeat(2_000))
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(200, client.get("/tasks/${created.id}").task().title.length)
+        assertEquals(2_000, client.get("/tasks/${created.id}").task().description.length)
+    }
+
+    @Test
+    fun `search treats SQL wildcards and quotes as literal text`() = apiTest {
+        client.createTask("Ordinary task")
+        for (query in listOf("%", "_", "\\", "' OR 1=1 --")) {
+            val matching = client.createTask("Search $query here").task()
+            val response = client.get("/tasks") { parameter("q", query) }
+
+            assertEquals(listOf(matching), response.tasks())
+        }
+    }
+
+    @Test
+    fun `database preserves Unicode and searches Cyrillic without case sensitivity`() = apiTest {
+        val created = client.createTask("Изучить Kotlin", "Задача с кириллицей").task()
+        val response = client.get("/tasks") { parameter("q", "ИЗУЧИТЬ") }
+
+        assertEquals(listOf(created), response.tasks())
+        assertEquals(created, client.get("/tasks/${created.id}").task())
+    }
+
+    @Test
+    fun `concurrent creates produce distinct persisted tasks`() = apiTest {
+        val created = coroutineScope {
+            (1..20).map { index ->
+                async {
+                    val response = client.createTask("Task $index")
+                    assertEquals(HttpStatusCode.Created, response.status)
+                    response.task()
+                }
+            }.awaitAll()
+        }
+
+        assertEquals(20, created.map { it.id }.toSet().size)
+        assertEquals(created.sortedBy { it.id }, client.get("/tasks").tasks())
+    }
+
+    @Test
+    fun `changes survive application and connection pool restarts`() {
+        lateinit var saved: TaskResponse
+        apiTest {
+            saved = client.createTask("Persist me", "Initial").task()
+            saved = client.updateTask(saved.id.toString(), "Updated", "Persisted", "DONE").task()
+        }
+
+        apiTest(resetData = false) {
+            assertEquals(saved, client.get("/tasks/${saved.id}").task())
+            val next = client.createTask("Next task").task()
+            assertTrue(next.id > saved.id)
+            assertEquals(HttpStatusCode.NoContent, client.delete("/tasks/${saved.id}").status)
+        }
+
+        apiTest(resetData = false) {
+            client.get("/tasks/${saved.id}").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
+            assertEquals("Next task", client.get("/tasks").tasks().single().title)
+        }
+    }
+
+    private fun apiTest(
+        resetData: Boolean = true,
+        block: suspend ApplicationTestBuilder.() -> Unit,
+    ) = testApplication {
+        environment {
+            config = MapApplicationConfig(
+                "database.url" to postgres.jdbcUrl,
+                "database.user" to postgres.username,
+                "database.password" to postgres.password,
+                "database.poolSize" to "3",
+            )
+        }
+        application { module() }
+        startApplication()
+        if (resetData) {
+            // Only the disposable database owned by this test class is reset.
+            postgres.createConnection("").use { connection ->
+                connection.createStatement().use { it.execute("TRUNCATE TABLE tasks RESTART IDENTITY") }
+            }
+        }
         block()
+    }
+
+    private suspend fun HttpClient.updateTask(
+        id: String,
+        title: String = "Updated",
+        description: String = "",
+        status: String = "DONE",
+    ): HttpResponse = put("/tasks/$id") {
+        contentType(ContentType.Application.Json)
+        setBody(Json.encodeToString(UpdateTaskRequest(title, description, status)))
     }
 
     private suspend fun HttpClient.createTask(
@@ -223,5 +403,21 @@ class TaskRoutesTest {
         val error = Json.decodeFromString<ApiError>(bodyAsText())
         assertEquals(expectedCode, error.code)
         assertTrue(error.message.isNotBlank())
+    }
+
+    companion object {
+        private val postgres = PostgreSQLContainer("postgres:18.6-alpine")
+
+        @BeforeClass
+        @JvmStatic
+        fun startDatabase() {
+            postgres.start()
+        }
+
+        @AfterClass
+        @JvmStatic
+        fun stopDatabase() {
+            postgres.stop()
+        }
     }
 }

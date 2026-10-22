@@ -11,6 +11,13 @@ data class CreateTaskRequest(
 )
 
 @Serializable
+data class UpdateTaskRequest(
+    val title: String,
+    val description: String,
+    val status: String,
+)
+
+@Serializable
 data class TaskResponse(
     val id: Long,
     val title: String,
