@@ -5,5 +5,5 @@ interface UserRepository {
     suspend fun findByLogin(login: String): User?
 
     /** Returns null when the login is already taken. */
-    suspend fun create(login: String, passwordHash: String): User?
+    suspend fun create(login: String, passwordHash: String, role: UserRole): User?
 }

@@ -1,6 +1,7 @@
 package com.vasilevyuv.application
 
 import com.vasilevyuv.auth.domain.InvalidCredentialsException
+import com.vasilevyuv.auth.domain.ForbiddenException
 import com.vasilevyuv.auth.domain.LoginAlreadyTakenException
 import com.vasilevyuv.common.api.ApiError
 import com.vasilevyuv.common.domain.ValidationException
@@ -17,6 +18,9 @@ import kotlin.coroutines.cancellation.CancellationException
 
 fun Application.configureErrors() {
     install(StatusPages) {
+        exception<ForbiddenException> { call, _ ->
+            call.respond(HttpStatusCode.Forbidden, ApiError("FORBIDDEN", "Administrator role is required"))
+        }
         exception<LoginAlreadyTakenException> { call, _ ->
             call.respond(HttpStatusCode.Conflict, ApiError("LOGIN_ALREADY_TAKEN", "Login is already taken"))
         }

@@ -1,5 +1,6 @@
 package com.vasilevyuv.tasks.api
 
+import com.vasilevyuv.auth.domain.UserRole
 import com.vasilevyuv.support.PostgresApiTest
 import com.vasilevyuv.support.assertError
 import io.ktor.client.HttpClient
@@ -25,7 +26,7 @@ import kotlin.test.assertTrue
 
 class TaskRoutesTest : PostgresApiTest() {
     @Test
-    fun `root describes the API in JSON`() = apiTest(authenticated = true) {
+    fun `root describes the API in JSON`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val response = client.get("/")
 
         assertEquals(HttpStatusCode.OK, response.status)
@@ -34,7 +35,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `list starts empty`() = apiTest(authenticated = true) {
+    fun `list starts empty`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val response = client.get("/tasks")
 
         assertEquals(HttpStatusCode.OK, response.status)
@@ -42,7 +43,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `create assigns an id and defaults and returns a location`() = apiTest(authenticated = true) {
+    fun `create assigns an id and defaults and returns a location`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val response = client.createTask("  Learn Kotlin  ")
         val task = response.task()
 
@@ -56,7 +57,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `get returns the stored task with all fields`() = apiTest(authenticated = true) {
+    fun `get returns the stored task with all fields`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val created = client.createTask("Read docs", "  Ktor routing  ", "IN_PROGRESS").task()
         val response = client.get("/tasks/${created.id}")
 
@@ -67,7 +68,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `list is ordered by id and filters by status`() = apiTest(authenticated = true) {
+    fun `list is ordered by id and filters by status`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val first = client.createTask("First").task()
         val done = client.createTask("Second", status = "DONE").task()
         val third = client.createTask("Third").task()
@@ -78,7 +79,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `search ignores case and combines with the status filter`() = apiTest(authenticated = true) {
+    fun `search ignores case and combines with the status filter`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         client.createTask("Learn Kotlin")
         val matching = client.createTask("Read KOTLIN docs", status = "DONE").task()
         client.createTask("Learn Ktor", status = "DONE")
@@ -91,14 +92,14 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `blank search means all tasks`() = apiTest(authenticated = true) {
+    fun `blank search means all tasks`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val task = client.createTask("Learn Kotlin").task()
 
         assertEquals(listOf(task), client.get("/tasks?q=%20%20").tasks())
     }
 
     @Test
-    fun `delete returns an empty 204 and removes only the requested task`() = apiTest(authenticated = true) {
+    fun `delete returns an empty 204 and removes only the requested task`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val removed = client.createTask("Remove me").task()
         val remaining = client.createTask("Keep me").task()
 
@@ -112,7 +113,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `ids are not reused after deletion`() = apiTest(authenticated = true) {
+    fun `ids are not reused after deletion`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val removed = client.createTask("First").task()
         client.delete("/tasks/${removed.id}")
         val created = client.createTask("Second").task()
@@ -121,7 +122,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `invalid path ids return 400`() = apiTest(authenticated = true) {
+    fun `invalid path ids return 400`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         for (id in listOf("abc", "0", "-1", "1.5", "9223372036854775808")) {
             client.get("/tasks/$id").assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
             client.delete("/tasks/$id").assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
@@ -130,7 +131,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `missing tasks return 404`() = apiTest(authenticated = true) {
+    fun `missing tasks return 404`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         client.get("/tasks/999").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
         client.delete("/tasks/999").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
         client.updateTask("999").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
@@ -138,12 +139,12 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `unknown routes return a JSON error`() = apiTest(authenticated = true) {
+    fun `unknown routes return a JSON error`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         client.get("/missing").assertError(HttpStatusCode.NotFound, "ROUTE_NOT_FOUND")
     }
 
     @Test
-    fun `invalid statuses are rejected in query and body`() = apiTest(authenticated = true) {
+    fun `invalid statuses are rejected in query and body`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         for (status in listOf("", "done", "UNKNOWN")) {
             client.get("/tasks?status=$status").assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
             client.createTask("Task", status = status)
@@ -153,7 +154,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `blank or oversized fields are rejected without creating tasks`() = apiTest(authenticated = true) {
+    fun `blank or oversized fields are rejected without creating tasks`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         for (title in listOf("", "   ", "a".repeat(201))) {
             client.createTask(title).assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
         }
@@ -163,7 +164,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `field length limits are inclusive`() = apiTest(authenticated = true) {
+    fun `field length limits are inclusive`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val response = client.createTask("a".repeat(200), "b".repeat(2_000))
 
         assertEquals(HttpStatusCode.Created, response.status)
@@ -172,12 +173,12 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `oversized search returns 400`() = apiTest(authenticated = true) {
+    fun `oversized search returns 400`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         client.get("/tasks?q=${"a".repeat(201)}").assertError(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
     }
 
     @Test
-    fun `malformed JSON and invalid body shapes return 400`() = apiTest(authenticated = true) {
+    fun `malformed JSON and invalid body shapes return 400`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val bodies = listOf(
             "",
             "{",
@@ -198,7 +199,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `non JSON request body returns 415`() = apiTest(authenticated = true) {
+    fun `non JSON request body returns 415`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         client.post("/tasks") {
             contentType(ContentType.Text.Plain)
             setBody("Task")
@@ -206,7 +207,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `put replaces all fields and preserves the id`() = apiTest(authenticated = true) {
+    fun `put replaces all fields and preserves the id`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val created = client.createTask("Before", "Old description").task()
         val other = client.createTask("Keep me").task()
 
@@ -221,7 +222,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `repeating put is idempotent and allows clearing the description`() = apiTest(authenticated = true) {
+    fun `repeating put is idempotent and allows clearing the description`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val created = client.createTask("Before", "Description").task()
 
         repeat(2) {
@@ -233,7 +234,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `invalid update leaves the existing task unchanged`() = apiTest(authenticated = true) {
+    fun `invalid update leaves the existing task unchanged`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val created = client.createTask("Original", "Keep this", "IN_PROGRESS").task()
         val id = created.id.toString()
 
@@ -248,7 +249,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `put requires all fields and rejects malformed bodies and client ids`() = apiTest(authenticated = true) {
+    fun `put requires all fields and rejects malformed bodies and client ids`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val created = client.createTask("Original").task()
         val bodies = listOf(
             "{", "{}", "[]", "null",
@@ -269,7 +270,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `put rejects non JSON bodies`() = apiTest(authenticated = true) {
+    fun `put rejects non JSON bodies`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val created = client.createTask("Original").task()
         client.put("/tasks/${created.id}") {
             contentType(ContentType.Text.Plain)
@@ -279,7 +280,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `update accepts the maximum field lengths`() = apiTest(authenticated = true) {
+    fun `update accepts the maximum field lengths`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val created = client.createTask("Original").task()
         val response = client.updateTask(created.id.toString(), "a".repeat(200), "b".repeat(2_000))
 
@@ -289,7 +290,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `search treats SQL wildcards and quotes as literal text`() = apiTest(authenticated = true) {
+    fun `search treats SQL wildcards and quotes as literal text`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         client.createTask("Ordinary task")
         for (query in listOf("%", "_", "\\", "' OR 1=1 --")) {
             val matching = client.createTask("Search $query here").task()
@@ -300,7 +301,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `database preserves Unicode and searches Cyrillic without case sensitivity`() = apiTest(authenticated = true) {
+    fun `database preserves Unicode and searches Cyrillic without case sensitivity`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val created = client.createTask("Изучить Kotlin", "Задача с кириллицей").task()
         val response = client.get("/tasks") { parameter("q", "ИЗУЧИТЬ") }
 
@@ -309,7 +310,7 @@ class TaskRoutesTest : PostgresApiTest() {
     }
 
     @Test
-    fun `concurrent creates produce distinct persisted tasks`() = apiTest(authenticated = true) {
+    fun `concurrent creates produce distinct persisted tasks`() = apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
         val created = coroutineScope {
             (1..20).map { index ->
                 async {
@@ -327,19 +328,19 @@ class TaskRoutesTest : PostgresApiTest() {
     @Test
     fun `changes survive application and connection pool restarts`() {
         lateinit var saved: TaskResponse
-        apiTest(authenticated = true) {
+        apiTest(authenticated = true, authenticatedRole = UserRole.ADMIN) {
             saved = client.createTask("Persist me", "Initial").task()
             saved = client.updateTask(saved.id.toString(), "Updated", "Persisted", "DONE").task()
         }
 
-        apiTest(resetData = false, authenticated = true) {
+        apiTest(resetData = false, authenticated = true, authenticatedRole = UserRole.ADMIN) {
             assertEquals(saved, client.get("/tasks/${saved.id}").task())
             val next = client.createTask("Next task").task()
             assertTrue(next.id > saved.id)
             assertEquals(HttpStatusCode.NoContent, client.delete("/tasks/${saved.id}").status)
         }
 
-        apiTest(resetData = false, authenticated = true) {
+        apiTest(resetData = false, authenticated = true, authenticatedRole = UserRole.ADMIN) {
             client.get("/tasks/${saved.id}").assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")
             assertEquals("Next task", client.get("/tasks").tasks().single().title)
         }

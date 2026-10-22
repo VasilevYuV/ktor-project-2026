@@ -2,6 +2,7 @@ package com.vasilevyuv.auth.data
 
 import com.vasilevyuv.auth.domain.User
 import com.vasilevyuv.auth.domain.UserRepository
+import com.vasilevyuv.auth.domain.UserRole
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.v1.core.ResultRow
@@ -20,13 +21,14 @@ class PostgresUserRepository(private val database: Database) : UserRepository {
         UsersTable.selectAll().where { UsersTable.login eq login }.singleOrNull()?.toUser()
     }
 
-    override suspend fun create(login: String, passwordHash: String): User? = dbQuery {
+    override suspend fun create(login: String, passwordHash: String, role: UserRole): User? = dbQuery {
         // The unique index also prevents duplicate logins during concurrent registrations.
         val inserted = UsersTable.insertIgnore {
             it[UsersTable.login] = login
             it[UsersTable.passwordHash] = passwordHash
+            it[UsersTable.role] = role
         }
-        if (inserted.insertedCount == 0) null else User(inserted[UsersTable.id], login, passwordHash)
+        if (inserted.insertedCount == 0) null else User(inserted[UsersTable.id], login, passwordHash, role)
     }
 
     private suspend fun <T> dbQuery(block: () -> T): T = withContext(Dispatchers.IO) {
@@ -37,5 +39,6 @@ class PostgresUserRepository(private val database: Database) : UserRepository {
         id = this[UsersTable.id],
         login = this[UsersTable.login],
         passwordHash = this[UsersTable.passwordHash],
+        role = this[UsersTable.role],
     )
 }

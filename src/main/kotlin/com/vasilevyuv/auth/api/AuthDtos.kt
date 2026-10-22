@@ -9,7 +9,7 @@ data class RegisterRequest(val login: String, val password: String)
 data class LoginRequest(val login: String, val password: String)
 
 @Serializable
-data class UserResponse(val id: Long, val login: String)
+data class UserResponse(val id: Long, val login: String, val role: String)
 
 @Serializable
 data class TokenResponse(val accessToken: String, val expiresIn: Long, val tokenType: String = "Bearer")

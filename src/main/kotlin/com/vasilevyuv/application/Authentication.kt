@@ -1,6 +1,7 @@
 package com.vasilevyuv.application
 
 import com.vasilevyuv.auth.domain.UserRepository
+import com.vasilevyuv.auth.security.AuthenticatedUser
 import com.vasilevyuv.auth.security.JwtTokenService
 import com.vasilevyuv.common.api.ApiError
 import io.ktor.http.HttpHeaders
@@ -8,7 +9,6 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.auth.Authentication
-import io.ktor.server.auth.jwt.JWTPrincipal
 import io.ktor.server.auth.jwt.jwt
 import io.ktor.server.response.respond
 
@@ -22,8 +22,8 @@ fun Application.configureAuthentication(tokens: JwtTokenService, users: UserRepo
             validate { credential ->
                 val payload = credential.payload
                 val userId = payload.getClaim("userId").asString()?.toLongOrNull()
-                if (payload.expiresAt != null && userId != null && userId > 0 && users.findById(userId) != null) {
-                    JWTPrincipal(payload)
+                if (payload.expiresAt != null && userId != null && userId > 0) {
+                    users.findById(userId)?.let { AuthenticatedUser(it.id, it.login, it.role) }
                 } else {
                     null
                 }

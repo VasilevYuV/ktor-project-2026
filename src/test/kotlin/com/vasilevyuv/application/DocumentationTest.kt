@@ -2,7 +2,10 @@ package com.vasilevyuv.application
 
 import com.vasilevyuv.auth.api.UserResponse
 import com.vasilevyuv.support.PostgresApiTest
+import com.vasilevyuv.support.TEST_ADMIN_LOGIN
+import com.vasilevyuv.support.TEST_ADMIN_SETTINGS
 import com.vasilevyuv.support.assertError
+import com.vasilevyuv.support.login
 import com.vasilevyuv.support.token
 import com.vasilevyuv.tasks.api.TaskResponse
 import io.ktor.client.request.bearerAuth
@@ -43,6 +46,7 @@ class DocumentationTest : PostgresApiTest() {
             "/" to setOf(HttpMethod.GET),
             "/auth/register" to setOf(HttpMethod.POST),
             "/auth/login" to setOf(HttpMethod.POST),
+            "/auth/me" to setOf(HttpMethod.GET),
             "/tasks" to setOf(HttpMethod.GET, HttpMethod.POST),
             "/tasks/{id}" to setOf(HttpMethod.GET, HttpMethod.PUT, HttpMethod.DELETE),
             "/docs" to setOf(HttpMethod.GET),
@@ -55,7 +59,7 @@ class DocumentationTest : PostgresApiTest() {
     }
 
     @Test
-    fun `specification documents JWT only for task writes and matches request DTOs`() = apiTest {
+    fun `specification documents authentication and roles and matches request DTOs`() = apiTest {
         val api = parseSpecification(client.get("/openapi.yaml").bodyAsText())
         val bearer = api.components.securitySchemes.getValue("bearerAuth")
         assertEquals(SecurityScheme.Type.HTTP, bearer.type)
@@ -63,7 +67,7 @@ class DocumentationTest : PostgresApiTest() {
         assertEquals("JWT", bearer.bearerFormat)
         for ((path, item) in api.paths) {
             for ((method, operation) in item.readOperationsMap()) {
-                val requiresToken = path.startsWith("/tasks") && method != HttpMethod.GET
+                val requiresToken = path == "/auth/me" || (path.startsWith("/tasks") && method != HttpMethod.GET)
                 val security = operation.security ?: api.security
                 assertEquals(requiresToken, !security.isNullOrEmpty(), "$method $path")
                 if (requiresToken) {
@@ -78,10 +82,13 @@ class DocumentationTest : PostgresApiTest() {
         for (name in listOf("CreateTaskRequest", "UpdateTaskRequest", "Credentials")) {
             assertEquals(false, schemas.getValue(name).additionalProperties)
         }
-        assertEquals(setOf("id", "login"), schemas.getValue("UserResponse").properties.keys)
+        assertEquals(setOf("id", "login", "role"), schemas.getValue("UserResponse").properties.keys)
+        assertEquals(setOf("id", "login", "role"), schemas.getValue("UserResponse").required.toSet())
+        assertEquals(listOf("USER", "ADMIN"), schemas.getValue("UserRole").enum)
         assertEquals(true, schemas.getValue("Credentials").properties.getValue("password").writeOnly)
         assertEquals(listOf("TODO", "IN_PROGRESS", "DONE"), schemas.getValue("TaskStatus").enum)
         assertTrue(api.paths.getValue("/tasks/{id}").delete.responses.getValue("204").content.isNullOrEmpty())
+        assertTrue(api.paths.getValue("/tasks/{id}").delete.responses.containsKey("403"))
     }
 
     @Test
@@ -118,7 +125,7 @@ class DocumentationTest : PostgresApiTest() {
     }
 
     @Test
-    fun `OpenAPI examples execute registration login and the complete CRUD cycle`() = apiTest {
+    fun `OpenAPI examples execute registration login and the complete CRUD cycle`() = apiTest(settings = TEST_ADMIN_SETTINGS) {
         val api = parseSpecification(client.get("/openapi.yaml").bodyAsText())
         fun example(name: String): String = SwaggerJson.mapper().writeValueAsString(api.components.schemas.getValue(name).example)
 
@@ -162,7 +169,9 @@ class DocumentationTest : PostgresApiTest() {
             setBody("""{"title":"Incomplete"}""")
         }.assertError(HttpStatusCode.BadRequest, "INVALID_REQUEST")
         client.delete(location).assertError(HttpStatusCode.Unauthorized, "UNAUTHORIZED")
-        val deleted = client.delete(location) { bearerAuth(token) }
+        client.delete(location) { bearerAuth(token) }.assertError(HttpStatusCode.Forbidden, "FORBIDDEN")
+        val adminToken = client.login(TEST_ADMIN_LOGIN).token().accessToken
+        val deleted = client.delete(location) { bearerAuth(adminToken) }
         assertEquals(HttpStatusCode.NoContent, deleted.status)
         assertEquals("", deleted.bodyAsText())
         client.get(location).assertError(HttpStatusCode.NotFound, "TASK_NOT_FOUND")

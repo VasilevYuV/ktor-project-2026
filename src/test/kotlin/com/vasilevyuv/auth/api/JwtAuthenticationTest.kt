@@ -55,7 +55,7 @@ class JwtAuthenticationTest : PostgresApiTest() {
     }
 
     @Test
-    fun `valid login token authorizes the complete write cycle`() = apiTest {
+    fun `valid user token authorizes creation and update but cannot delete`() = apiTest {
         client.register()
         val token = client.login().token().accessToken
         val task = client.createTask(token)
@@ -66,7 +66,7 @@ class JwtAuthenticationTest : PostgresApiTest() {
         }
         assertEquals(HttpStatusCode.OK, updated.status)
         assertEquals("DONE", Json.decodeFromString<TaskResponse>(updated.bodyAsText()).status)
-        assertEquals(HttpStatusCode.NoContent, client.delete("/tasks/${task.id}") { bearerAuth(token) }.status)
+        client.delete("/tasks/${task.id}") { bearerAuth(token) }.assertError(HttpStatusCode.Forbidden, "FORBIDDEN")
     }
 
     @Test

@@ -37,10 +37,11 @@ class AuthRoutesTest : PostgresApiTest() {
         val response = client.register("  StuDent_1  ")
         assertEquals(HttpStatusCode.Created, response.status)
         assertEquals(ContentType.Application.Json, response.contentType()?.withoutParameters())
-        assertEquals(setOf("id", "login"), Json.parseToJsonElement(response.bodyAsText()).jsonObject.keys)
+        assertEquals(setOf("id", "login", "role"), Json.parseToJsonElement(response.bodyAsText()).jsonObject.keys)
         val user = Json.decodeFromString<UserResponse>(response.bodyAsText())
         assertTrue(user.id > 0)
         assertEquals("student_1", user.login)
+        assertEquals("USER", user.role)
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.vasilevyuv.tasks.api
 
+import com.vasilevyuv.auth.api.requireAdmin
 import com.vasilevyuv.common.domain.ValidationException
 import com.vasilevyuv.tasks.domain.TaskStatus
 import com.vasilevyuv.tasks.service.TaskService
@@ -40,6 +41,7 @@ fun Route.taskRoutes(service: TaskService, authenticationProvider: String) {
                 call.respond(task.toResponse())
             }
             delete("/{id}") {
+                call.requireAdmin()
                 val id = parseTaskId(call.parameters["id"])
                 service.delete(id)
                 call.respond(HttpStatusCode.NoContent)

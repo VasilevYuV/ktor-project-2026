@@ -21,6 +21,8 @@ const val TEST_JWT_SECRET = "test-only-secret-at-least-32-bytes-long"
 const val TEST_JWT_ISSUER = "test-task-api"
 const val TEST_JWT_AUDIENCE = "test-task-client"
 const val TEST_PASSWORD = "Test password 123!"
+const val TEST_ADMIN_LOGIN = "admin_tester"
+val TEST_ADMIN_SETTINGS = mapOf("admin.login" to TEST_ADMIN_LOGIN, "admin.password" to TEST_PASSWORD)
 
 suspend fun HttpClient.register(login: String = "student", password: String = TEST_PASSWORD): HttpResponse =
     post("/auth/register") {
